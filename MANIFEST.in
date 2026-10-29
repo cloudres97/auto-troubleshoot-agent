@@ -1,0 +1,4 @@
+include constraints.txt environments.example.json .env.example
+include start.py start.sh
+recursive-include docs *.md
+recursive-include tools *.py

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "yarn-status-triage", "version": "1", "title": "YARN 应用状态核查",
+    "target_types": ["yarn_application"], "tool": "get_target_status",
+    "steps": ["核对环境与应用身份", "读取受控应用状态", "校验响应归属、失败和截断标记", "仅记录有证据的事实，原因不足时保持未定位"]
+  },
+  {
+    "id": "service-status-triage", "version": "1", "title": "服务与运行环境初步核查",
+    "target_types": ["java_service", "go_service", "docker_container", "virtual_machine"], "tool": "get_target_status",
+    "steps": ["从描述核对受影响服务或主机", "调用已登记的只读状态采集", "区分演示数据、采集失败与真实观察", "整理证据及仍待核实的问题"]
+  },
+  {
+    "id": "infrastructure-status-triage", "version": "1", "title": "网络与存储初步核查",
+    "target_types": ["network", "storage"], "tool": "get_target_status",
+    "steps": ["核对故障资源与访问范围", "调用受控只读状态采集", "核验采集范围与证据完整性", "保留定位限制，不从单一症状推断原因"]
+  }
+]
