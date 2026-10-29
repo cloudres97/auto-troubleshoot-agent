@@ -11,7 +11,7 @@ from .config import Settings
 from .contracts import TargetInfo, ToolRequest, ToolResult
 from .db import Audit, Case, Evidence, database, now
 from .diagnosis import make_report
-from .planning import Plan, RulePlanner, registered_skill, skill_for, validate_plan
+from .planning import Plan, RulePlanner, registered_skill, resolve_environments, skill_for, validate_plan
 
 
 def run_once(sessions, settings, client=None, planner=None):
@@ -38,9 +38,16 @@ def run_once(sessions, settings, client=None, planner=None):
                 response = http.get(settings.executor_url.rstrip("/") + "/v1/targets", headers={"Authorization": "Bearer " + settings.executor_token}, timeout=5)
                 response.raise_for_status()
                 targets = TypeAdapter(list[TargetInfo]).validate_python(response.json())
-                problem = "\n".join([case.symptom, *[m["content"] for m in (case.conversation or []) if m["role"] == "user"]])
-                context = case.environment_info + "\n" + problem
-                plan = validate_plan((planner or RulePlanner()).plan(problem, context, case.environment_id, targets), targets)
+                messages = [m["content"] for m in (case.conversation or []) if m["role"] == "user"]
+                problem = "\n".join(messages or [case.symptom])
+                context = "\n".join([case.environment_info, *messages[1:]])
+                environments = resolve_environments(context, case.environment_id, targets)
+                if len(environments) != 1:
+                    plan = Plan(status="needs_information", question="请补充环境名称或可识别的主机/服务信息，以便核对已登记的访问范围；无需选择技术场景。")
+                else:
+                    environment_id = next(iter(environments))
+                    scoped_targets = [t for t in targets if t.environment_id == environment_id]
+                    plan = validate_plan((planner or RulePlanner()).plan(problem, context, environment_id, scoped_targets), scoped_targets)
                 if case.environment_id and plan.status == "ready" and plan.environment_id != case.environment_id:
                     raise ValueError("Planner changed the specified environment")
             skill = registered_skill(plan.skill_id) if plan.status == "ready" else None

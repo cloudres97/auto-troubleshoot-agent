@@ -49,9 +49,21 @@ class Planner(Protocol):
 
 def contains(text, term):
     text, term = text.casefold(), term.casefold()
+    if not term.strip():
+        return False
     if re.fullmatch(r"[a-z0-9_.-]+", term):
         return re.search(r"(?<![a-z0-9_.-])" + re.escape(term) + r"(?![a-z0-9_.-])", text) is not None
     return term in text
+
+
+def resolve_environments(environment_info, environment_id, targets):
+    environments = {t.environment_id for t in targets}
+    if environment_id:
+        return {environment_id} & environments
+    matches = {env for env in environments if contains(environment_info, env)}
+    if not matches:
+        matches = {t.environment_id for t in targets if any(contains(environment_info, name) for name in (t.target_id, t.label, *t.aliases))}
+    return matches
 
 
 def skill_for(kind):
@@ -92,13 +104,7 @@ class RulePlanner:
     }
 
     def plan(self, problem, environment_info, environment_id, targets):
-        environments = {t.environment_id for t in targets}
-        if environment_id:
-            matching_environments = {environment_id} & environments
-        else:
-            matching_environments = {env for env in environments if contains(environment_info, env)}
-            if not matching_environments:
-                matching_environments = {t.environment_id for t in targets if any(contains(environment_info, name) for name in (t.target_id, t.label, *t.aliases))}
+        matching_environments = resolve_environments(environment_info, environment_id, targets)
         if len(matching_environments) != 1:
             return Plan(status="needs_information", question="请补充环境名称或可识别的主机/服务信息，以便核对已登记的访问范围；无需选择技术场景。")
         env = next(iter(matching_environments))

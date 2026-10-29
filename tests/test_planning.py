@@ -91,6 +91,26 @@ def test_unknown_environment_is_not_silently_replaced_by_demo(system):
     assert detail["evidence"] == []
 
 
+def test_comparison_in_problem_does_not_override_unknown_environment(system):
+    settings, sessions, api, executor = system
+    case_id = submit(api, "Java 服务报错，现象与 demo 环境相似", "尚未登记的生产环境")
+    run_once(sessions, settings, executor)
+    detail = api.get(f"/v1/cases/{case_id}", headers=OP).json()
+    assert detail["state"] == "waiting_information"
+    assert detail["evidence"] == []
+
+
+def test_missing_environment_can_be_supplied_in_same_conversation(system):
+    settings, sessions, api, executor = system
+    case_id = submit(api, "Java 服务无响应", "还不清楚环境名")
+    run_once(sessions, settings, executor)
+    detail = api.get(f"/v1/cases/{case_id}", headers=OP).json()
+    assert detail["state"] == "waiting_information"
+    assert api.post(f"/v1/cases/{case_id}/messages", headers=OP, json={"revision": detail["revision"], "message": "环境是 demo"}).status_code == 200
+    run_once(sessions, settings, executor)
+    assert api.get(f"/v1/cases/{case_id}", headers=OP).json()["state"] == "awaiting_review"
+
+
 def test_registered_service_alias_can_identify_environment(system):
     settings, sessions, api, executor = system
     case_id = submit(api, "请求一直超时", "orders-api")
