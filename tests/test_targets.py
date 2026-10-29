@@ -22,7 +22,7 @@ from troubleshoot.worker import run_once
 OP = {"Authorization": "Bearer operator-test"}
 REVIEW = {"Authorization": "Bearer reviewer-test"}
 EX = {"Authorization": "Bearer executor-test"}
-REGISTRY = json.loads((Path(__file__).resolve().parents[1] / "environments.example.json").read_text())
+REGISTRY = json.loads((Path(__file__).resolve().parents[1] / "environments.example.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture
