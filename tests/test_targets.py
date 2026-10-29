@@ -68,7 +68,7 @@ def test_catalog_is_authenticated_and_hides_connection_configuration(generic):
     assert len(response.json()) == 7
     assert {t["source"] for t in response.json()} == {"demo"}
     for target in response.json():
-        assert set(target) == {"environment_id", "target_id", "target_type", "label", "source"}
+        assert set(target) == {"environment_id", "target_id", "target_type", "label", "source", "aliases"}
 
 
 @pytest.mark.parametrize("target_id,target_type", [("unregistered", "java_service"), ("demo-java", "network"), ("demo-go", "storage")])
@@ -125,7 +125,8 @@ def test_yarn_resource_id_is_configured_only_in_registry(generic):
         assert detail["report"]["observations"][0]["text"].endswith("RUNNING")
 
 
-def test_v01_database_upgrade_is_additive_and_repeatable(tmp_path):
+@pytest.mark.parametrize("version", ["0.1", "0.2"])
+def test_legacy_database_upgrade_is_additive_and_repeatable(tmp_path, version):
     path = tmp_path / "legacy.db"
     case_id, evidence_id = str(uuid4()), str(uuid4())
     raw = json.dumps({"app": {"id": "application_1_0001", "state": "FAILED"}})
@@ -140,6 +141,10 @@ def test_v01_database_upgrade_is_additive_and_repeatable(tmp_path):
         connection.execute("INSERT INTO cases VALUES (?,?,?,?,?,?,?,?,?,?,?)", (case_id, "demo", "application_1_0001", "旧工单", "awaiting_review", "2026-10-29T00:00:00+00:00", "2026-10-29T00:00:00+00:00", None, None, report, 2))
         connection.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", (evidence_id, case_id, "demo", "application_1_0001", str(uuid4()), "get_application_status", "1", "2026-10-29T00:00:00+00:00", "ok", "demo", raw, hashlib.sha256(raw.encode()).hexdigest(), False))
         connection.execute("INSERT INTO audit VALUES (?,?,?,?,?,?)", (str(uuid4()), case_id, "2026-10-29T00:00:00+00:00", "worker", "report_drafted", None))
+        if version == "0.2":
+            for table in ("cases", "evidence"):
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN target_id VARCHAR(128) NOT NULL DEFAULT 'application_1_0001'")
+                connection.execute(f"ALTER TABLE {table} ADD COLUMN target_type VARCHAR(40) NOT NULL DEFAULT 'yarn_application'")
     url = f"sqlite:///{path}"
     database(url)
     sessions = database(url)
@@ -148,6 +153,9 @@ def test_v01_database_upgrade_is_additive_and_repeatable(tmp_path):
     detail = api.get(f"/v1/cases/{case_id}", headers=OP).json()
     assert detail["target_id"] == "application_1_0001"
     assert detail["target_type"] == "yarn_application"
+    assert detail["environment_info"] == ""
+    assert detail["plan"] is None
+    assert detail["conversation"] is None
     assert detail["evidence"][0]["target_id"] == "application_1_0001"
     assert detail["audit"][0]["action"] == "report_drafted"
     assert api.post(f"/v1/cases/{case_id}/review", headers=REVIEW, json={"revision": 2, "note": "升级后复核"}).status_code == 200

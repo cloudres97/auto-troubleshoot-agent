@@ -5,36 +5,43 @@
 <style>
 body{font:16px/1.6 system-ui,sans-serif;background:#f3f6fa;color:#17263c;margin:0}main{max-width:1000px;margin:40px auto;padding:24px}h1{margin-bottom:4px}.muted{color:#52647b}.panel{background:white;border:1px solid #dae2ec;border-radius:14px;padding:24px;margin:20px 0}input,textarea,button{font:inherit;padding:10px;box-sizing:border-box;border:1px solid #aebdd0;border-radius:6px}input,textarea{display:block;width:100%;margin:6px 0 16px}button{background:#205ac0;color:white;cursor:pointer;margin:4px 8px 4px 0}button:disabled{opacity:.5;cursor:wait}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f6fa;padding:16px}#message{color:#a12824}label{display:block}a{color:#205ac0}.case{display:block;text-align:left;width:100%;background:#edf3ff;color:#17263c}
 </style>
-<style>select{font:inherit;padding:10px;border:1px solid #aebdd0;border-radius:6px;display:block;width:100%;margin:6px 0 16px}</style>
+
 <main>
-<h1>自动诊断工作台</h1><p class="muted">只读采集 · 原始证据留存 · 人工复核。首版使用确定性检查，尚未接入公司模型。</p>
-<section class="panel"><label>操作员访问令牌<input id="token" type="password" autocomplete="off" placeholder="仅保存在当前页面内存中"></label><button id="refresh">加载环境、对象与工单</button></section>
+<h1>自动诊断工作台</h1><p class="muted">描述问题与已知环境，系统核对对象并推进只读排查。当前为本地规则原型，尚未接入公司模型。</p>
+<section class="panel"><label>操作员访问令牌<input id="token" type="password" autocomplete="off" placeholder="仅保存在当前页面内存中"></label><button id="refresh">连接工作台 / 刷新工单</button></section>
 <section class="panel"><h2>新建诊断工单</h2><form id="new-case">
-<label>环境<select id="environment" required><option value="">请先加载环境和对象</option></select></label>
-<label>对象类型<select id="target-type" required></select></label>
-<label>诊断对象<select id="target" required></select></label>
-<p id="target-hint" class="muted">选择管理员已登记的容器、虚机、服务、网络、存储或 YARN 应用。</p>
+<label>已知环境信息<textarea id="environment-info" required maxlength="4000" placeholder="例如：测试环境 A，订单服务，主机名或已知地址。按你掌握的信息填写，不需要判断技术场景。"></textarea></label>
 <label>故障现象<textarea id="symptom" required maxlength="4000" placeholder="填写现象、发生时间和预期行为；不要填写密钥"></textarea></label>
-<button id="submit-case" type="submit" disabled>提交只读诊断</button></form><p class="muted">演示对象仅验证流程，不采集真实状态。真实能力取决于已接入的采集适配器；Worker 运行后才会处理队列。</p></section>
+<button id="submit-case" type="submit">开始排查</button><button id="demo" type="button">填入演示问题</button></form><p class="muted">系统会从已登记的环境与工具中核对访问范围；信息不足时会追问。请勿输入密钥。演示问题只验证流程，不采集真实状态。</p></section>
 <p id="message" role="alert"></p><section class="panel"><h2>最近工单</h2><div id="cases">点击“加载工单”查看。</div></section>
-<section class="panel" id="detail-panel" hidden><h2>诊断详情</h2><pre id="detail"></pre><button id="reload-detail">刷新详情</button><button id="cancel">取消待处理工单</button>
+<section class="panel" id="detail-panel" hidden><h2>诊断详情</h2><p id="status"></p><div id="conversation"></div><div id="plan"></div><div id="report"></div>
+<form id="followup" hidden><label>补充信息<textarea id="followup-message" required maxlength="4000" placeholder="按系统提问补充你掌握的信息"></textarea></label><button type="submit">补充并继续排查</button></form>
+<details><summary>证据与审计详情</summary><pre id="detail"></pre></details><button id="reload-detail">刷新详情</button><button id="cancel">取消待处理工单</button>
 <details><summary>人工复核</summary><p>复核只确认报告已审阅，不会把“未定位”变成“已确认”。原始证据通过受保护的 API 下载。</p><label>复核员令牌<input id="reviewer" type="password" autocomplete="off"></label><label>复核说明<input id="note" maxlength="2000"></label><button id="approve">批准当前报告</button><button id="recover">核实后重新只读采集</button></details></section>
 </main>
 <script>
-const el=id=>document.getElementById(id);let selected=null,targets=[];
+const el=id=>document.getElementById(id);let selected=null,detailTicket=0,polling=false;
 const types={docker_container:'Docker 容器',virtual_machine:'虚拟机',java_service:'Java 服务',go_service:'Go 服务',network:'网络',storage:'存储',yarn_application:'YARN 应用'};
-function options(id,items){el(id).replaceChildren();for(const [value,label] of items){const option=document.createElement('option');option.value=value;option.textContent=label;el(id).append(option)}}
-function chooseTarget(){const t=targets.find(t=>t.environment_id===el('environment').value&&t.target_type===el('target-type').value&&t.target_id===el('target').value);el('submit-case').disabled=!t;el('target-hint').textContent=t?(t.source==='demo'?'演示对象：仅验证流程，尚未采集此对象的真实状态。':'已接入 YARN 只读采集；不能仅凭应用状态认定根因。'):'当前没有可选诊断对象。'}
-function chooseType(){options('target',targets.filter(t=>t.environment_id===el('environment').value&&t.target_type===el('target-type').value).map(t=>[t.target_id,t.label+' · '+t.target_id+(t.source==='demo'?'（演示）':'')]));chooseTarget()}
-function chooseEnvironment(){const available=new Set(targets.filter(t=>t.environment_id===el('environment').value).map(t=>t.target_type));options('target-type',Object.entries(types).filter(([key])=>available.has(key)));chooseType()}
-el('environment').onchange=chooseEnvironment;el('target-type').onchange=chooseType;el('target').onchange=chooseTarget;
+const states={queued:'等待排查',collecting:'正在核对与采集',waiting_information:'等待补充信息',planning_failed:'排查规划暂未完成',collection_unknown:'采集结果待人工核实',awaiting_review:'报告待复核',completed:'报告已复核',cancelled:'已取消'};
 async function api(path,method='GET',body,review=false){const response=await fetch('/v1'+path,{method,headers:{Authorization:'Bearer '+el(review?'reviewer':'token').value,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));return data;}
 async function act(fn){el('message').textContent='';try{await fn()}catch(e){el('message').textContent=e.message}}
-async function detail(id){selected=await api('/cases/'+id);el('detail-panel').hidden=false;el('detail').textContent=JSON.stringify(selected,null,2)}
-async function refresh(){const cases=await api('/cases');el('cases').replaceChildren();if(!cases.length)el('cases').textContent='暂无工单';for(const c of cases){const b=document.createElement('button');b.className='case';b.textContent=c.environment_id+' · '+(types[c.target_type]||c.target_type)+' · '+c.target_id+' · '+c.state+'\n'+c.symptom;b.onclick=()=>act(()=>detail(c.id));el('cases').append(b)}}
-el('refresh').onclick=()=>act(async()=>{await refresh();targets=[];options('environment',[]);chooseEnvironment();targets=await api('/targets');options('environment',[...new Set(targets.map(t=>t.environment_id))].map(id=>[id,id]));chooseEnvironment()});el('reload-detail').onclick=()=>act(()=>detail(selected.id));
-el('new-case').onsubmit=e=>{e.preventDefault();act(async()=>{const c=await api('/cases','POST',{environment_id:el('environment').value,target_type:el('target-type').value,target_id:el('target').value,symptom:el('symptom').value});await refresh();await detail(c.id)})};
+function text(parent,tag,value){const node=document.createElement(tag);node.textContent=value;parent.append(node);return node}
+function render(c){
+ el('detail-panel').hidden=false;el('status').textContent='当前进度：'+(states[c.state]||c.state);
+ el('conversation').replaceChildren();for(const m of c.conversation||[])text(el('conversation'),'p',(m.role==='user'?'你：':'系统：')+m.content);
+ el('plan').replaceChildren();if(c.plan&&c.plan.status==='ready'){text(el('plan'),'h3','排查计划');text(el('plan'),'p','已核对对象：'+(types[c.target_type]||c.target_type)+' · '+c.target_id);const steps=text(el('plan'),'ol','');for(const step of c.plan.steps||[])text(steps,'li',step)}
+ el('report').replaceChildren();if(c.error)text(el('report'),'p',c.error);if(c.report){text(el('report'),'h3','排查报告');text(el('report'),'p','定位状态：'+c.report.location_status);for(const o of c.report.observations||[])text(el('report'),'p',(o.source==='demo'?'【演示】':'')+o.text);for(const item of c.report.unresolved||[])text(el('report'),'p',item)}
+ el('followup').hidden=c.state!=='waiting_information';el('approve').disabled=c.state!=='awaiting_review';el('recover').disabled=!['collecting','collection_unknown','planning_failed'].includes(c.state);el('cancel').disabled=!['queued','collecting','waiting_information','planning_failed','collection_unknown'].includes(c.state);
+ el('detail').textContent=JSON.stringify({case_id:c.id,revision:c.revision,plan:c.plan,evidence:c.evidence,audit:c.audit},null,2);
+}
+async function detail(id){const ticket=++detailTicket;const c=await api('/cases/'+id);if(ticket!==detailTicket)return;selected=c;render(c)}
+async function refresh(){const cases=await api('/cases');el('cases').replaceChildren();if(!cases.length)el('cases').textContent='暂无工单';for(const c of cases){const b=document.createElement('button');b.className='case';b.textContent=(c.environment_id||c.environment_info)+' · '+(states[c.state]||c.state)+' — '+c.symptom;b.onclick=()=>act(()=>detail(c.id));el('cases').append(b)}}
+el('refresh').onclick=()=>act(refresh);el('reload-detail').onclick=()=>act(()=>detail(selected.id));
+el('demo').onclick=()=>{el('environment-info').value='demo（演示环境）';el('symptom').value='演示：Java 服务接口无响应，请帮忙排查。'};
+el('new-case').onsubmit=e=>{e.preventDefault();act(async()=>{el('submit-case').disabled=true;try{const c=await api('/cases','POST',{environment_info:el('environment-info').value,symptom:el('symptom').value});await refresh();await detail(c.id)}finally{el('submit-case').disabled=false}})};
+el('followup').onsubmit=e=>{e.preventDefault();act(async()=>{await api('/cases/'+selected.id+'/messages','POST',{revision:selected.revision,message:el('followup-message').value});el('followup-message').value='';await detail(selected.id);await refresh()})};
 el('cancel').onclick=()=>act(async()=>{await api('/cases/'+selected.id+'/cancel','POST');await detail(selected.id);await refresh()});
 for(const [id,action]of [['approve','review'],['recover','recover']])el(id).onclick=()=>act(async()=>{await api('/cases/'+selected.id+'/'+action,'POST',{revision:selected.revision,note:el('note').value},true);await detail(selected.id);await refresh()});
+setInterval(async()=>{if(polling||!selected||document.hidden||!['queued','collecting'].includes(selected.state)||!el('token').value)return;polling=true;try{await detail(selected.id)}catch(e){el('message').textContent=e.message}finally{polling=false}},2000);
 </script>
 </html>

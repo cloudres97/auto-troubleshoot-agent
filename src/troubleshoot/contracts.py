@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,6 +10,7 @@ class StrictModel(BaseModel):
 
 
 class TargetScope(StrictModel):
+    require_target: ClassVar[bool] = True
     environment_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     target_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_.-]{1,128}$")
     target_type: TargetType | None = None
@@ -23,13 +24,26 @@ class TargetScope(StrictModel):
                 raise ValueError("Legacy application_id cannot be combined with another target")
             self.target_id = self.application_id
             self.target_type = "yarn_application"
+        if not self.target_id and not self.target_type and not self.require_target:
+            return self
         if not self.target_id or not self.target_type:
             raise ValueError("Choose target_id and target_type")
         return self
 
 
 class CaseInput(TargetScope):
+    require_target: ClassVar[bool] = False
+    environment_id: str = Field(default="", pattern=r"^[a-zA-Z0-9_-]{0,64}$")
+    environment_info: str = Field(default="", max_length=4000)
     symptom: str = Field(min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def intake(self):
+        if not self.symptom.strip() or not (self.environment_id or self.environment_info.strip()):
+            raise ValueError("Provide the problem and known environment information")
+        if self.target_id and not self.environment_id:
+            raise ValueError("Explicit target requests require environment_id")
+        return self
 
 
 class TargetInfo(StrictModel):
@@ -38,6 +52,7 @@ class TargetInfo(StrictModel):
     target_type: TargetType
     label: str = Field(max_length=100)
     source: Literal["demo", "yarn"]
+    aliases: list[str] = Field(default_factory=list, max_length=20)
 
 
 class ToolRequest(TargetScope):
@@ -67,3 +82,14 @@ class ToolResult(TargetScope):
 class Review(StrictModel):
     revision: int = Field(ge=1)
     note: str = Field(min_length=1, max_length=2000)
+
+
+class Followup(StrictModel):
+    revision: int = Field(ge=1)
+    message: str = Field(min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def meaningful(self):
+        if not self.message.strip():
+            raise ValueError("Message must not be blank")
+        return self

@@ -3,8 +3,8 @@
     "targets": {
       "demo-docker": {"target_type": "docker_container", "adapter": "demo", "label": "演示 Docker 容器"},
       "demo-vm": {"target_type": "virtual_machine", "adapter": "demo", "label": "演示虚拟机"},
-      "demo-java": {"target_type": "java_service", "adapter": "demo", "label": "演示 Java 服务"},
-      "demo-go": {"target_type": "go_service", "adapter": "demo", "label": "演示 Go 服务"},
+      "demo-java": {"target_type": "java_service", "adapter": "demo", "label": "演示 Java 服务", "aliases": ["订单服务", "orders-api"]},
+      "demo-go": {"target_type": "go_service", "adapter": "demo", "label": "演示 Go 服务", "aliases": ["支付服务", "payments-api"]},
       "demo-network": {"target_type": "network", "adapter": "demo", "label": "演示网络链路"},
       "demo-storage": {"target_type": "storage", "adapter": "demo", "label": "演示存储资源"},
       "application_1_0001": {"target_type": "yarn_application", "adapter": "demo", "label": "演示 YARN 应用", "application_id": "application_1_0001"}

@@ -35,7 +35,7 @@ def create_executor(registry=None, token=None, client=None):
 
     @app.get("/v1/targets", response_model=list[TargetInfo], dependencies=[Depends(bearer(token))])
     def targets():
-        return [TargetInfo(environment_id=env, target_id=key, target_type=value["target_type"], label=value["label"] or key, source=value["adapter"]) for env, entry in registry.items() for key, value in entry["targets"].items()]
+        return [TargetInfo(environment_id=env, target_id=key, target_type=value["target_type"], label=value["label"] or key, source=value["adapter"], aliases=value["aliases"]) for env, entry in registry.items() for key, value in entry["targets"].items()]
 
     @app.post("/v1/tools/run", response_model=ToolResult, dependencies=[Depends(bearer(token))])
     def run(request: ToolRequest):

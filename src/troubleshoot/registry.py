@@ -12,11 +12,14 @@ class RegisteredTarget(StrictModel):
     target_type: TargetType
     adapter: Literal["demo", "yarn"]
     label: str = Field(default="", max_length=100)
+    aliases: list[str] = Field(default_factory=list, max_length=20)
     base_url: str | None = None
     application_id: str | None = Field(default=None, pattern=r"^application_[0-9]{1,20}_[0-9]{1,20}$")
 
     @model_validator(mode="after")
     def adapter_scope(self):
+        if any(not name.strip() or len(name) > 100 for name in self.aliases):
+            raise ValueError("Target aliases must contain 1-100 characters")
         if self.adapter == "yarn":
             if self.target_type != "yarn_application" or not self.application_id:
                 raise ValueError("YARN adapter requires a YARN target and application_id")

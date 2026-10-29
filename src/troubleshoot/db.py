@@ -27,6 +27,9 @@ class Case(Base):
     target_id: Mapped[str] = mapped_column(String(128))
     target_type: Mapped[str] = mapped_column(String(40))
     symptom: Mapped[str] = mapped_column(Text)
+    environment_info: Mapped[str] = mapped_column(Text, default="")
+    plan: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    conversation: Mapped[list | None] = mapped_column(JSON, nullable=True)
     state: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
     updated_at: Mapped[str] = mapped_column(String(40), default=now)
@@ -89,5 +92,12 @@ def database(url):
                     connection.exec_driver_sql(f"UPDATE {table} SET target_id = application_id")
                 if "target_type" not in columns:
                     connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN target_type VARCHAR(40) NOT NULL DEFAULT 'yarn_application'")
+                if table == "cases":
+                    if "environment_info" not in columns:
+                        connection.exec_driver_sql("ALTER TABLE cases ADD COLUMN environment_info TEXT NOT NULL DEFAULT ''")
+                    if "plan" not in columns:
+                        connection.exec_driver_sql("ALTER TABLE cases ADD COLUMN plan JSON")
+                    if "conversation" not in columns:
+                        connection.exec_driver_sql("ALTER TABLE cases ADD COLUMN conversation JSON")
         Base.metadata.create_all(connection)
     return sessionmaker(engine, expire_on_commit=False)

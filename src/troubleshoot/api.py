@@ -8,7 +8,7 @@ from pydantic import TypeAdapter
 
 from .auth import bearer
 from .config import Settings
-from .contracts import CaseInput, Review, TargetInfo
+from .contracts import CaseInput, Followup, Review, TargetInfo
 from .db import Audit, Case, Evidence, database, now
 from .diagnosis import verify_evidence
 
@@ -16,7 +16,7 @@ from .diagnosis import verify_evidence
 def create_app(settings=None, sessions=None, executor_client=None):
     settings = settings or Settings.load()
     sessions = sessions or database(settings.database_url)
-    app = FastAPI(title="自动诊断工作台", version="0.2.0")
+    app = FastAPI(title="自动诊断工作台", version="0.3.0")
     operator = [Depends(bearer(settings.api_token))]
     reviewer = [Depends(bearer(settings.reviewer_token))]
 
@@ -27,7 +27,7 @@ def create_app(settings=None, sessions=None, executor_client=None):
         return case
 
     def serialize(case):
-        return {key: getattr(case, key) for key in ("id", "environment_id", "target_id", "target_type", "application_id", "symptom", "state", "created_at", "updated_at", "error", "report", "revision")}
+        return {key: getattr(case, key) for key in ("id", "environment_id", "environment_info", "target_id", "target_type", "application_id", "symptom", "state", "created_at", "updated_at", "error", "plan", "conversation", "report", "revision")}
 
     def catalog():
         def fetch(client):
@@ -59,10 +59,12 @@ def create_app(settings=None, sessions=None, executor_client=None):
     @app.post("/v1/cases", status_code=201, dependencies=operator)
     def create_case(body: CaseInput):
         # Legacy clients remain accepted; the executor still enforces their scope.
-        if not body.application_id and not any((t.environment_id, t.target_id, t.target_type) == (body.environment_id, body.target_id, body.target_type) for t in catalog()):
+        if body.target_id and not body.application_id and not any((t.environment_id, t.target_id, t.target_type) == (body.environment_id, body.target_id, body.target_type) for t in catalog()):
             raise HTTPException(403, "请选择当前环境已登记的诊断对象。")
         with sessions.begin() as session:
-            case = Case(**body.model_dump())
+            values = body.model_dump()
+            values.update(target_id=body.target_id or "", target_type=body.target_type or "")
+            case = Case(**values, conversation=[{"role": "user", "content": body.symptom, "at": now()}])
             session.add(case)
             session.flush()
             session.add(Audit(case_id=case.id, actor="operator", action="case_created"))
@@ -72,6 +74,21 @@ def create_app(settings=None, sessions=None, executor_client=None):
     def list_cases():
         with sessions() as session:
             return [serialize(case) for case in session.scalars(select(Case).order_by(Case.created_at.desc()).limit(100))]
+
+    @app.post("/v1/cases/{case_id}/messages", dependencies=operator)
+    def supplement(case_id: str, body: Followup):
+        with sessions.begin() as session:
+            case = get_case(session, case_id)
+            if case.state != "waiting_information" or case.revision != body.revision:
+                raise HTTPException(409, "Case is not awaiting information or its revision changed")
+            conversation = [*(case.conversation or []), {"role": "user", "content": body.message, "at": now()}]
+            if len(conversation) > 40:
+                raise HTTPException(409, "Conversation budget exhausted; create a new case with the consolidated information")
+            changed = session.execute(update(Case).where(Case.id == case_id, Case.state == "waiting_information", Case.revision == body.revision).values(state="queued", plan=None, conversation=conversation, claim_id=None, revision=Case.revision + 1, updated_at=now()))
+            if changed.rowcount != 1:
+                raise HTTPException(409, "Case changed while adding information")
+            session.add(Audit(case_id=case_id, actor="operator", action="information_provided"))
+            return {"state": "queued"}
 
     @app.get("/v1/cases/{case_id}", dependencies=operator)
     def case_detail(case_id: str):
@@ -115,7 +132,7 @@ def create_app(settings=None, sessions=None, executor_client=None):
     def cancel(case_id: str):
         with sessions.begin() as session:
             get_case(session, case_id)
-            changed = session.execute(update(Case).where(Case.id == case_id, Case.state.in_(["queued", "collecting", "collection_unknown"])).values(state="cancelled", claim_id=None, updated_at=now(), revision=Case.revision + 1))
+            changed = session.execute(update(Case).where(Case.id == case_id, Case.state.in_(["queued", "collecting", "collection_unknown", "planning_failed", "waiting_information"])).values(state="cancelled", claim_id=None, updated_at=now(), revision=Case.revision + 1))
             if changed.rowcount != 1:
                 raise HTTPException(409, "Case cannot be cancelled in its current state")
             session.add(Audit(case_id=case_id, actor="operator", action="case_cancelled"))
@@ -126,7 +143,7 @@ def create_app(settings=None, sessions=None, executor_client=None):
         # Explicit operator recovery only: never automatically replay interrupted I/O.
         with sessions.begin() as session:
             get_case(session, case_id)
-            changed = session.execute(update(Case).where(Case.id == case_id, Case.state.in_(["collecting", "collection_unknown"]), Case.revision == body.revision).values(state="queued", claim_id=None, error=None, revision=body.revision + 1, updated_at=now()))
+            changed = session.execute(update(Case).where(Case.id == case_id, Case.state.in_(["collecting", "collection_unknown", "planning_failed"]), Case.revision == body.revision).values(state="queued", claim_id=None, error=None, revision=body.revision + 1, updated_at=now()))
             if changed.rowcount != 1:
                 raise HTTPException(409, "Case state or revision changed")
             session.add(Audit(case_id=case_id, actor="reviewer", action="manual_read_only_retry", note=body.note))

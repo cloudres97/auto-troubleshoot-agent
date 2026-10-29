@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "auto-troubleshoot-agent"
-version = "0.2.0"
+version = "0.3.0"
 description = "Evidence-first, read-only diagnosis workbench"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,7 +24,7 @@ troubleshoot-start = "troubleshoot.launcher:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-troubleshoot = ["static/*.html"]
+troubleshoot = ["static/*.html", "skills.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
