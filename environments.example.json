@@ -1,0 +1,6 @@
+{
+  "demo": {
+    "adapter": "demo",
+    "applications": ["application_1_0001"]
+  }
+}

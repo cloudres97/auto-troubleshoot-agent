@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-troubleshoot-agent"
+version = "0.1.0"
+description = "Evidence-first, read-only diagnosis workbench"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi==0.115.12", "uvicorn==0.34.2", "SQLAlchemy==2.0.41",
+  "httpx==0.28.1", "psycopg[binary]==3.2.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.5", "build==1.2.2.post1"]
+
+[project.scripts]
+troubleshoot-worker = "troubleshoot.worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+troubleshoot = ["static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

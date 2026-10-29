@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>自动诊断工作台</title>
+<style>
+body{font:16px/1.6 system-ui,sans-serif;background:#f3f6fa;color:#17263c;margin:0}main{max-width:1000px;margin:40px auto;padding:24px}h1{margin-bottom:4px}.muted{color:#52647b}.panel{background:white;border:1px solid #dae2ec;border-radius:14px;padding:24px;margin:20px 0}input,textarea,button{font:inherit;padding:10px;box-sizing:border-box;border:1px solid #aebdd0;border-radius:6px}input,textarea{display:block;width:100%;margin:6px 0 16px}button{background:#205ac0;color:white;cursor:pointer;margin:4px 8px 4px 0}button:disabled{opacity:.5;cursor:wait}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f6fa;padding:16px}#message{color:#a12824}label{display:block}a{color:#205ac0}.case{display:block;text-align:left;width:100%;background:#edf3ff;color:#17263c}
+</style>
+<main>
+<h1>自动诊断工作台</h1><p class="muted">只读采集 · 原始证据留存 · 人工复核。首版使用确定性检查，尚未接入公司模型。</p>
+<section class="panel"><label>操作员访问令牌<input id="token" type="password" autocomplete="off" placeholder="仅保存在当前页面内存中"></label><button id="refresh">加载工单</button></section>
+<section class="panel"><h2>新建诊断工单</h2><form id="new-case">
+<label>环境 ID<input id="environment" required value="demo"></label>
+<label>YARN 应用 ID<input id="application" required value="application_1_0001" pattern="application_[0-9]{1,20}_[0-9]{1,20}"></label>
+<label>故障现象<textarea id="symptom" required maxlength="4000" placeholder="填写现象、发生时间和预期行为；不要填写密钥"></textarea></label>
+<button type="submit">提交只读诊断</button></form><p class="muted">demo 是模拟环境，其结果不代表真实测试环境。Worker 运行后才会处理队列。</p></section>
+<p id="message" role="alert"></p><section class="panel"><h2>最近工单</h2><div id="cases">点击“加载工单”查看。</div></section>
+<section class="panel" id="detail-panel" hidden><h2>诊断详情</h2><pre id="detail"></pre><button id="reload-detail">刷新详情</button><button id="cancel">取消待处理工单</button>
+<details><summary>人工复核</summary><p>复核只确认报告已审阅，不会把“未定位”变成“已确认”。原始证据通过受保护的 API 下载。</p><label>复核员令牌<input id="reviewer" type="password" autocomplete="off"></label><label>复核说明<input id="note" maxlength="2000"></label><button id="approve">批准当前报告</button><button id="recover">核实后重新只读采集</button></details></section>
+</main>
+<script>
+const el=id=>document.getElementById(id);let selected=null;
+async function api(path,method='GET',body,review=false){const response=await fetch('/v1'+path,{method,headers:{Authorization:'Bearer '+el(review?'reviewer':'token').value,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const data=await response.json();if(!response.ok)throw Error(typeof data.detail==='string'?data.detail:JSON.stringify(data.detail));return data;}
+async function act(fn){el('message').textContent='';try{await fn()}catch(e){el('message').textContent=e.message}}
+async function detail(id){selected=await api('/cases/'+id);el('detail-panel').hidden=false;el('detail').textContent=JSON.stringify(selected,null,2)}
+async function refresh(){const cases=await api('/cases');el('cases').replaceChildren();if(!cases.length)el('cases').textContent='暂无工单';for(const c of cases){const b=document.createElement('button');b.className='case';b.textContent=c.environment_id+' · '+c.application_id+' · '+c.state+'\n'+c.symptom;b.onclick=()=>act(()=>detail(c.id));el('cases').append(b)}}
+el('refresh').onclick=()=>act(refresh);el('reload-detail').onclick=()=>act(()=>detail(selected.id));
+el('new-case').onsubmit=e=>{e.preventDefault();act(async()=>{const c=await api('/cases','POST',{environment_id:el('environment').value,application_id:el('application').value,symptom:el('symptom').value});await refresh();await detail(c.id)})};
+el('cancel').onclick=()=>act(async()=>{await api('/cases/'+selected.id+'/cancel','POST');await detail(selected.id);await refresh()});
+for(const [id,action]of [['approve','review'],['recover','recover']])el(id).onclick=()=>act(async()=>{await api('/cases/'+selected.id+'/'+action,'POST',{revision:selected.revision,note:el('note').value},true);await detail(selected.id);await refresh()});
+</script>
+</html>
