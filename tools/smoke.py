@@ -46,7 +46,10 @@ def main():
                     assert "自动诊断工作台" in client.get(base).text
                     op = {"Authorization": "Bearer " + config["DIAG_API_TOKEN"]}
                     review = {"Authorization": "Bearer " + config["DIAG_REVIEWER_TOKEN"]}
-                    created = client.post(base + "/v1/cases", headers=op, json={"environment_id": "demo", "application_id": "application_1_0001", "symptom": "演示应用启动失败"})
+                    catalog = client.get(base + "/v1/targets", headers=op)
+                    catalog.raise_for_status()
+                    assert len(catalog.json()) == 7
+                    created = client.post(base + "/v1/cases", headers=op, json={"environment_id": "demo", "target_type": "java_service", "target_id": "demo-java", "symptom": "演示服务不可用"})
                     created.raise_for_status()
                     path = base + "/v1/cases/" + created.json()["id"]
                     subprocess.run([sys.executable, "-m", "troubleshoot.worker", "--once"], cwd=root, env=config, check=True, timeout=40)
@@ -54,6 +57,7 @@ def main():
                     assert detail["state"] == "awaiting_review"
                     assert detail["report"]["root_cause"] is None
                     assert detail["evidence"][0]["source"] == "demo"
+                    assert detail["evidence"][0]["target_id"] == "demo-java"
                     response = client.post(path + "/review", headers=review, json={"revision": detail["revision"], "note": "Smoke: demo report reviewed"})
                     response.raise_for_status()
                     assert client.get(path, headers=op).json()["state"] == "completed"

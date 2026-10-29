@@ -1,20 +1,22 @@
 from pathlib import Path
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 from sqlalchemy import select, text, update
+from pydantic import TypeAdapter
 
 from .auth import bearer
 from .config import Settings
-from .contracts import CaseInput, Review
+from .contracts import CaseInput, Review, TargetInfo
 from .db import Audit, Case, Evidence, database, now
 from .diagnosis import verify_evidence
 
 
-def create_app(settings=None, sessions=None):
+def create_app(settings=None, sessions=None, executor_client=None):
     settings = settings or Settings.load()
     sessions = sessions or database(settings.database_url)
-    app = FastAPI(title="自动诊断工作台", version="0.1.0")
+    app = FastAPI(title="自动诊断工作台", version="0.2.0")
     operator = [Depends(bearer(settings.api_token))]
     reviewer = [Depends(bearer(settings.reviewer_token))]
 
@@ -25,7 +27,24 @@ def create_app(settings=None, sessions=None):
         return case
 
     def serialize(case):
-        return {key: getattr(case, key) for key in ("id", "environment_id", "application_id", "symptom", "state", "created_at", "updated_at", "error", "report", "revision")}
+        return {key: getattr(case, key) for key in ("id", "environment_id", "target_id", "target_type", "application_id", "symptom", "state", "created_at", "updated_at", "error", "report", "revision")}
+
+    def catalog():
+        def fetch(client):
+            response = client.get(settings.executor_url.rstrip("/") + "/v1/targets", headers={"Authorization": "Bearer " + settings.executor_token}, timeout=5)
+            response.raise_for_status()
+            return TypeAdapter(list[TargetInfo]).validate_python(response.json())
+        try:
+            if executor_client is not None:
+                return fetch(executor_client)
+            with httpx.Client(verify=True, follow_redirects=False) as client:
+                return fetch(client)
+        except (httpx.HTTPError, ValueError) as exc:
+            raise HTTPException(503, "无法加载诊断对象，请检查执行器是否已启动及服务令牌是否一致。") from exc
+
+    @app.get("/v1/targets", response_model=list[TargetInfo], dependencies=operator)
+    def targets():
+        return catalog()
 
     @app.get("/")
     def index():
@@ -39,6 +58,9 @@ def create_app(settings=None, sessions=None):
 
     @app.post("/v1/cases", status_code=201, dependencies=operator)
     def create_case(body: CaseInput):
+        # Legacy clients remain accepted; the executor still enforces their scope.
+        if not body.application_id and not any((t.environment_id, t.target_id, t.target_type) == (body.environment_id, body.target_id, body.target_type) for t in catalog()):
+            raise HTTPException(403, "请选择当前环境已登记的诊断对象。")
         with sessions.begin() as session:
             case = Case(**body.model_dump())
             session.add(case)
@@ -56,7 +78,7 @@ def create_app(settings=None, sessions=None):
         with sessions() as session:
             case = get_case(session, case_id)
             result = serialize(case)
-            result["evidence"] = [{key: getattr(e, key) for key in ("id", "case_id", "environment_id", "application_id", "request_id", "tool", "tool_version", "collected_at", "source", "status", "sha256", "truncated")} for e in session.scalars(select(Evidence).where(Evidence.case_id == case_id))]
+            result["evidence"] = [{key: getattr(e, key) for key in ("id", "case_id", "environment_id", "target_id", "target_type", "application_id", "request_id", "tool", "tool_version", "collected_at", "source", "status", "sha256", "truncated")} for e in session.scalars(select(Evidence).where(Evidence.case_id == case_id))]
             result["audit"] = [{"at": a.at, "actor": a.actor, "action": a.action, "note": a.note} for a in session.scalars(select(Audit).where(Audit.case_id == case_id).order_by(Audit.at))]
             return result
 

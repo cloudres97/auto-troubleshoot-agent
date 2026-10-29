@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, create_engine, event
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, create_engine, event, inspect
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -23,7 +23,9 @@ class Case(Base):
     __tablename__ = "cases"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     environment_id: Mapped[str] = mapped_column(String(64))
-    application_id: Mapped[str] = mapped_column(String(80))
+    application_id: Mapped[str] = mapped_column(String(80), default="")
+    target_id: Mapped[str] = mapped_column(String(128))
+    target_type: Mapped[str] = mapped_column(String(40))
     symptom: Mapped[str] = mapped_column(Text)
     state: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     created_at: Mapped[str] = mapped_column(String(40), default=now)
@@ -39,7 +41,9 @@ class Evidence(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     case_id: Mapped[str] = mapped_column(ForeignKey("cases.id"), index=True)
     environment_id: Mapped[str] = mapped_column(String(64))
-    application_id: Mapped[str] = mapped_column(String(80))
+    application_id: Mapped[str] = mapped_column(String(80), default="")
+    target_id: Mapped[str] = mapped_column(String(128))
+    target_type: Mapped[str] = mapped_column(String(40))
     request_id: Mapped[str] = mapped_column(String(36), unique=True)
     tool: Mapped[str] = mapped_column(String(80))
     tool_version: Mapped[str] = mapped_column(String(20))
@@ -71,5 +75,19 @@ def database(url):
         def pragmas(connection, _):
             connection.execute("PRAGMA foreign_keys=ON")
             connection.execute("PRAGMA journal_mode=WAL")
-    Base.metadata.create_all(engine)
+    with engine.begin() as connection:
+        # Serialize the additive v0.1 -> v0.2 upgrade across API/Worker starts.
+        if parsed.drivername.startswith("sqlite"):
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
+        elif parsed.drivername.startswith("postgresql"):
+            connection.exec_driver_sql("SELECT pg_advisory_xact_lock(783192044)")
+        for table in ("cases", "evidence"):
+            if inspect(connection).has_table(table):
+                columns = {c["name"] for c in inspect(connection).get_columns(table)}
+                if "target_id" not in columns:
+                    connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN target_id VARCHAR(128) NOT NULL DEFAULT ''")
+                    connection.exec_driver_sql(f"UPDATE {table} SET target_id = application_id")
+                if "target_type" not in columns:
+                    connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN target_type VARCHAR(40) NOT NULL DEFAULT 'yarn_application'")
+        Base.metadata.create_all(connection)
     return sessionmaker(engine, expire_on_commit=False)

@@ -26,7 +26,7 @@ def run_once(sessions, settings, client=None):
         session.add(Audit(case_id=case_id, actor="worker", action="collection_started"))
     with sessions() as session:
         case = session.get(Case, case_id)
-        request = ToolRequest(case_id=case.id, request_id=str(uuid4()), environment_id=case.environment_id, application_id=case.application_id, tool="get_application_status")
+        request = ToolRequest(case_id=case.id, request_id=str(uuid4()), environment_id=case.environment_id, target_id=case.target_id, target_type=case.target_type, application_id=case.application_id, tool="get_target_status")
     try:
         def invoke(http):
             response = http.post(settings.executor_url.rstrip("/") + "/v1/tools/run", json=request.model_dump(), headers={"Authorization": "Bearer " + settings.executor_token}, timeout=25)
